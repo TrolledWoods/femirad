@@ -1,5 +1,4 @@
 use std::convert::TryFrom;
-use std::io::Read;
 use glam::{IVec2, ivec2};
 
 pub const WORLD_SIZE: usize = 32;
@@ -84,6 +83,41 @@ impl Board {
         Some(())
     }
 
+    pub fn get_moves(&self) -> impl Iterator<Item = Move> + '_ {
+        let player = self.current_player;
+        (0..WORLD_SIZE as i32)
+            .flat_map(move |y| {
+                (0..WORLD_SIZE as i32)
+                    .filter(move |&x|
+                        matches!(self.get(ivec2(x, y)), Some(None))
+                        && (
+                            matches!(self.get(ivec2(x + 1, y)),     Some(Some(_))) ||
+                            matches!(self.get(ivec2(x - 1, y)),     Some(Some(_))) ||
+                            matches!(self.get(ivec2(x, y + 1)),     Some(Some(_))) ||
+                            matches!(self.get(ivec2(x, y - 1)),     Some(Some(_))) ||
+                            matches!(self.get(ivec2(x + 1, y + 1)), Some(Some(_))) ||
+                            matches!(self.get(ivec2(x - 1, y + 1)), Some(Some(_))) ||
+                            matches!(self.get(ivec2(x + 1, y - 1)), Some(Some(_))) ||
+                            matches!(self.get(ivec2(x - 1, y - 1)), Some(Some(_)))
+                        )
+                    )
+                    .map(move |x| Move::Set(ivec2(x, y), player))
+            })
+            .filter(move |&r#move| self.is_move_valid(r#move))
+    }
+
+    fn is_move_valid(&self, r#move: Move) -> bool {
+        match r#move {
+            Move::Set(pos, _) => {
+                if let Some(Some(_)) | None = self.get(pos) {
+                    return false;
+                }
+
+                true
+            }
+        }
+    }
+
     fn check_win_for_direction(&self, wanted: Player, direction: IVec2) -> bool {
         for y in 0..WORLD_SIZE as i32 - direction.y * WIN_LENGTH {
             for x in 0..WORLD_SIZE as i32 - direction.x * WIN_LENGTH {
@@ -150,7 +184,7 @@ impl Board {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Move {
     Set(IVec2, Player),
 }
@@ -170,11 +204,45 @@ impl Move {
     }
 }
 
+fn score_board(board: &mut Board, recursion: usize) -> (Option<Move>, i32) {
+    if recursion == 0 {
+        // println!("Found board end");
+        return (None, 0);
+    }
+
+    let moves: Vec<_> = board.get_moves().collect();
+
+    moves
+        .into_iter()
+        .map(|r#move| {
+            let result = match board.do_move(r#move) {
+                Ok(true) => i32::MAX,
+                // We take the negative here because it's the opponents move.
+                Ok(false) => -score_board(board, recursion - 1).1,
+                Err(_) => panic!("Invalid!"),
+            };
+            board.undo_move();
+            (Some(r#move), result)
+        })
+        .max_by_key(|(_, v)| *v)
+        .unwrap_or((None, i32::MIN))
+}
+
 fn main() {
     let mut board = Board::new();
     'outer: loop {
         for _ in 0..30 {
             println!();
+        }
+
+        if board.current_player == Player::B {
+            if let (Some(r#move), _) = score_board(&mut board, 5) {
+                if let Ok(true) = board.do_move(r#move) {
+                    board.print();
+                    eprintln!("Computer won!");
+                    break 'outer;
+                }
+            }
         }
 
         board.print();
@@ -187,6 +255,7 @@ fn main() {
             match board.do_move(r#move) {
                 Ok(won) => {
                     if won {
+                        board.print();
                         println!("We have a winner!");
                         break 'outer;
                     }
