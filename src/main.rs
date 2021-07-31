@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use glam::{IVec2, ivec2};
 
-pub const WORLD_SIZE: usize = 32;
+pub const WORLD_SIZE: usize = 16;
 pub const WIN_LENGTH: i32 = 5;
 
 pub type Tile = Option<Player>;
@@ -109,44 +109,41 @@ impl Board {
     fn is_move_valid(&self, r#move: Move) -> bool {
         match r#move {
             Move::Set(pos, _) => {
-                if let Some(Some(_)) | None = self.get(pos) {
-                    return false;
-                }
-
-                true
+                !matches!(self.get(pos), Some(Some(_)) | None)
             }
         }
     }
 
-    fn check_win_for_direction(&self, wanted: Player, direction: IVec2) -> bool {
+    fn check_win_for_direction(&self, wanted: Player, direction: IVec2) -> i32 {
+        let mut max_length = 0;
         for y in 0..WORLD_SIZE as i32 - direction.y * WIN_LENGTH {
             for x in 0..WORLD_SIZE as i32 - direction.x * WIN_LENGTH {
-                let mut win = true;
-                for i in 0..WIN_LENGTH {
+                let mut length = 0;
+                for i in 0.. {
                     if let Some(Some(player)) = self.get(ivec2(x, y) + direction * i) {
                         if player != wanted {
-                            win = false;
+                            length = i;
                             break;
                         }
                     } else {
-                        win = false;
+                        length = i;
                         break;
                     }
                 }
 
-                if win {
-                    return true;
+                if length > max_length {
+                    max_length = length;
                 }
             }
         }
 
-        false
+        max_length
     }
 
-    pub fn check_win(&self, wanted: Player) -> bool {
-        self.check_win_for_direction(wanted, ivec2(1, 0)) |
-        self.check_win_for_direction(wanted, ivec2(1, 1)) |
-        self.check_win_for_direction(wanted, ivec2(0, 1))
+    pub fn check_win(&self, wanted: Player) -> i32 {
+        self.check_win_for_direction(wanted, ivec2(1, 0))
+        .max(self.check_win_for_direction(wanted, ivec2(1, 1)))
+        .max(self.check_win_for_direction(wanted, ivec2(0, 1)))
     }
 
     pub fn do_move(&mut self, r#move: Move) -> Result<bool, &'static str> {
@@ -170,7 +167,7 @@ impl Board {
 
         self.current_player = self.current_player.rotate();
 
-        Ok(won)
+        Ok(won >= WIN_LENGTH)
     }
 
     pub fn undo_move(&mut self) {
@@ -180,6 +177,8 @@ impl Board {
                     self.set(pos, None);
                 }
             }
+
+            self.current_player = self.current_player.rotate();
         }
     }
 }
@@ -204,10 +203,14 @@ impl Move {
     }
 }
 
+fn fast_board_score(board: &Board) -> i32 {
+    board.check_win(board.current_player).pow(2) - board.check_win(board.current_player.rotate()).pow(2)
+}
+
 fn score_board(board: &mut Board, recursion: usize) -> (Option<Move>, i32) {
     if recursion == 0 {
         // println!("Found board end");
-        return (None, 0);
+        return (None, fast_board_score(board));
     }
 
     let moves: Vec<_> = board.get_moves().collect();
@@ -233,16 +236,6 @@ fn main() {
     'outer: loop {
         for _ in 0..30 {
             println!();
-        }
-
-        if board.current_player == Player::B {
-            if let (Some(r#move), _) = score_board(&mut board, 5) {
-                if let Ok(true) = board.do_move(r#move) {
-                    board.print();
-                    eprintln!("Computer won!");
-                    break 'outer;
-                }
-            }
         }
 
         board.print();
@@ -273,6 +266,25 @@ fn main() {
         if failed_move {
             println!("Press <ENTER> to try another move");
             let _ = std::io::stdin().read_line(&mut string);
+            continue 'outer;
+        }
+
+        assert_eq!(board.current_player, Player::B);
+        if let (Some(r#move), _) = score_board(&mut board, 4) {
+            match board.do_move(r#move) {
+                Ok(true) => {
+                    board.print();
+                    println!("Computer won!");
+                    break 'outer;
+                }
+                Ok(false) => {
+                    println!("Computer did move");
+                }
+                Err(error) => {
+                    println!("Computer made an invalid move! {}", error);
+                    break 'outer;
+                }
+            }
         }
     }
 }
