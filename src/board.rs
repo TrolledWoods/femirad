@@ -15,8 +15,9 @@ pub struct Board {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Move {
-    Set(IVec2, Player),
+pub struct Move {
+    pub pos: IVec2,
+    pub player: Player,
 }
 
 impl Move {
@@ -30,7 +31,10 @@ impl Move {
             return None;
         }
 
-        Some(Self::Set(pos, current_player))
+        Some(Self {
+            pos,
+            player: current_player,
+        })
     }
 }
 
@@ -133,17 +137,13 @@ impl Board {
                             matches!(self.get(ivec2(x - 1, y - 1)), Some(Some(_)))
                         )
                     )
-                    .map(move |x| Move::Set(ivec2(x, y), player))
+                    .map(move |x| Move { pos: ivec2(x, y), player })
             })
             .filter(move |&r#move| self.is_move_valid(r#move))
     }
 
     fn is_move_valid(&self, r#move: Move) -> bool {
-        match r#move {
-            Move::Set(pos, _) => {
-                !matches!(self.get(pos), Some(Some(_)) | None)
-            }
-        }
+        !matches!(self.get(r#move.pos), Some(Some(_)) | None)
     }
 
     fn pos_directional_score(&self, pos: IVec2, direction: IVec2) -> (i32, Option<Player>) {
@@ -213,48 +213,44 @@ impl Board {
             return Err("Cannot do a move when someone has won");
         }
 
-        match r#move {
-            Move::Set(pos, player) => {
-                if let Some(Some(_)) = self.get(pos) {
-                    return Err("Something is already at this spot");
-                }
+        let Move { pos, player } = r#move;
 
-                let old_score = self.score;
-                self.score -= self.score_for_position(pos).0;
-                let result = self.set(pos, Some(player));
-                let (new_score, winner) = self.score_for_position(pos);
-                self.score += new_score;
-                // If the set failed, then don't update the current player
-                if result.is_none() {
-                    self.score = old_score;
-                    return Err("Invalid coordinate");
-                }
-
-                self.moves.push(r#move);
-                self.score_stack.push(old_score);
-
-                self.current_player = self.current_player.rotate();
-
-                if let Some(winner) = winner {
-                    self.won = Some(winner);
-                }
-
-                Ok(winner)
-            }
+        if let Some(Some(_)) = self.get(pos) {
+            return Err("Something is already at this spot");
         }
+
+        let old_score = self.score;
+        self.score -= self.score_for_position(pos).0;
+        let result = self.set(pos, Some(player));
+        let (new_score, winner) = self.score_for_position(pos);
+        self.score += new_score;
+        // If the set failed, then don't update the current player
+        if result.is_none() {
+            self.score = old_score;
+            return Err("Invalid coordinate");
+        }
+
+        self.moves.push(r#move);
+        self.score_stack.push(old_score);
+
+        self.current_player = self.current_player.rotate();
+
+        if let Some(winner) = winner {
+            self.won = Some(winner);
+        }
+
+        Ok(winner)
     }
 
     pub fn undo_move(&mut self) {
         if let Some(r#move) = self.moves.pop() {
             self.won = None;
 
-            match r#move {
-                Move::Set(pos, _) => {
-                    self.score -= self.score_for_position(pos).0;
-                    self.set(pos, None);
-                    self.score += self.score_for_position(pos).0;
-                }
-            }
+            let Move { pos, .. } = r#move;
+
+            self.score -= self.score_for_position(pos).0;
+            self.set(pos, None);
+            self.score += self.score_for_position(pos).0;
 
             assert_eq!(Some(self.score), self.score_stack.pop());
 

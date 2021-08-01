@@ -22,7 +22,13 @@ fn score_board(board: &mut Board, recursion: usize) -> (Option<Move>, Score) {
     let mut moves: Vec<_> = board.get_moves().collect();
 
     if moves.is_empty() {
-        return (Some(Move::Set(ivec2(WORLD_SIZE as i32 / 2, WORLD_SIZE as i32 / 2), board.current_player)), Score(0, 0));
+        return (
+            Some(Move {
+                pos: ivec2(WORLD_SIZE as i32 / 2, WORLD_SIZE as i32 / 2),
+                player: board.current_player,
+            }),
+            Score(0, 0),
+        );
     }
 
     // Do the temporary thing
