@@ -8,6 +8,15 @@ pub struct MinMax<T> {
     pub depth: u32,
 }
 
+impl<T> MinMax<T> {
+    pub fn new(score: T, depth: u32) -> Self {
+        Self {
+            score,
+            depth,
+        }
+    }
+}
+
 impl<T> ScoringFunction for MinMax<T> where T: ScoringFunction {
     fn score(&self, board: &mut Board) -> Score {
         self.do_minmax(board, self.depth).1
@@ -15,6 +24,10 @@ impl<T> ScoringFunction for MinMax<T> where T: ScoringFunction {
 }
 
 impl<T> Ai for MinMax<T> where T: ScoringFunction {
+    fn name(&self) -> &str {
+        "Min max"
+    }
+
     fn pick_move(&self, board: &mut Board) -> Option<Move> {
         self.do_minmax(board, self.depth).0
     }
@@ -29,7 +42,21 @@ impl<T> MinMax<T> where T: ScoringFunction {
 
         let want_to_win = board.current_player;
 
-        let mut moves: Vec<_> = board.get_moves().collect();
+        let temp_moves: Vec<Move> = board.get_moves().collect();
+        let mut moves: Vec<(Move, i32)> = temp_moves
+            .into_iter()
+            .map(|r#move| {
+                let result = match board.do_move(r#move) {
+                    Ok(Some(winner)) if winner == want_to_win => i32::MAX,
+                    Ok(Some(_)) => i32::MIN,
+                    // We take the negative here because it's the opponents move(the resulting board is for the opponent).
+                    Ok(None) => -self.score.score(board).0,
+                    Err(_) => panic!("Invalid!"),
+                };
+                board.undo_move();
+                (r#move, result)
+            })
+            .collect();
 
         if moves.is_empty() {
             return (
@@ -42,24 +69,22 @@ impl<T> MinMax<T> where T: ScoringFunction {
         }
 
         // Do the temporary thing
-        moves.sort_by_key(|&r#move| {
-            let result = match board.do_move(r#move) {
-                Ok(Some(winner)) if winner == want_to_win => i32::MAX,
-                Ok(Some(_)) => i32::MIN,
-                // We take the negative here because it's the opponents move(the resulting board is for the opponent).
-                Ok(None) => -self.score.score(board).0,
-                Err(_) => panic!("Invalid!"),
-            };
-            board.undo_move();
-            result
-        });
+        moves.sort_unstable_by(|(_, a), (_, b)| b.cmp(a));
+
+        if let Some(&(r#move, i32::MAX)) = moves.get(0) {
+            // The best move is a guaranteed win, we can "shortcircuit"
+            return (Some(r#move), Score(i32::MAX, 0));
+        }
+
+        if let Some((_, i32::MIN)) = moves.get(0) {
+            // @Robustness: We should make a check here, I don't think this case should ever trigger
+        }
 
         // Do the full scoring of the top moves
         moves
             .into_iter()
-            .rev()
             .take(14)
-            .map(|r#move| {
+            .map(|(r#move, _)| {
                 let result = match board.do_move(r#move) {
                     Ok(Some(winner)) if winner == want_to_win => Score(i32::MAX, recursion as i32),
                     Ok(Some(_)) => Score(i32::MIN, recursion as i32),

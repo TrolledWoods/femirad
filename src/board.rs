@@ -11,7 +11,7 @@ pub struct Board {
     pub moves: Vec<Move>,
     pub score: i32,
     score_stack: Vec<i32>,
-    won: Option<Player>,
+    pub won: Option<Player>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -142,7 +142,7 @@ impl Board {
             .filter(move |&r#move| self.is_move_valid(r#move))
     }
 
-    fn is_move_valid(&self, r#move: Move) -> bool {
+    pub fn is_move_valid(&self, r#move: Move) -> bool {
         !matches!(self.get(r#move.pos), Some(Some(_)) | None)
     }
 

@@ -1,6 +1,9 @@
 use glam::ivec2;
 use board::*;
+use user_input::UserInput;
+use minmax::MinMax;
 
+mod user_input;
 mod minmax;
 mod board;
 
@@ -13,9 +16,14 @@ pub trait ScoringFunction {
 
 /// An `Ai` that can play moves on a board
 pub trait Ai {
+    fn requires_user_output(&self) -> bool { false }
+    fn name(&self) -> &str;
+
     /// This function should return which move it will make on a given board.
     /// The reason the board variable is mutable is so that the Ai can play around with it as a scratch-pad
     /// of sorts, after the function returns the state of the board should not have changed.
+    ///
+    /// The move returned has to be valid.
     fn pick_move(&self, board: &mut Board) -> Option<Move>;
 }
 
@@ -34,135 +42,74 @@ impl ScoringFunction for BasicScore {
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Score(i32, i32);
 
-fn fast_board_score(board: &Board) -> i32 {
-    board.score * if board.current_player == Player::A { 1 } else { -1 }
-}
+pub fn run_match(player_a: impl Ai, player_b: impl Ai, print_debugging: bool) -> Player {
+    let mut board = Board::new();
 
-fn score_board(board: &mut Board, recursion: usize) -> (Option<Move>, Score) {
-    if recursion == 0 {
-        // println!("Found board end");
-        return (None, Score(fast_board_score(board), 0));
-    }
+    let require_user_output = player_a.requires_user_output() || player_b.requires_user_output();
 
-    let want_to_win = board.current_player;
+    loop {
+        if print_debugging || require_user_output {
+            println!("{}s move.", player_a.name());
+            board.print();
+        }
 
-    let mut moves: Vec<_> = board.get_moves().collect();
-
-    if moves.is_empty() {
-        return (
-            Some(Move {
-                pos: ivec2(WORLD_SIZE as i32 / 2, WORLD_SIZE as i32 / 2),
-                player: board.current_player,
-            }),
-            Score(0, 0),
-        );
-    }
-
-    // Do the temporary thing
-    moves.sort_by_key(|&r#move| {
-        let result = match board.do_move(r#move) {
-            Ok(Some(winner)) if winner == want_to_win => i32::MAX,
-            Ok(Some(_)) => i32::MIN,
-            // We take the negative here because it's the opponents move(the resulting board is for the opponent).
-            Ok(None) => -fast_board_score(board),
-            Err(_) => panic!("Invalid!"),
-        };
-        board.undo_move();
-        result
-    });
-
-    // Do the full scoring of the top moves
-    moves
-        .into_iter()
-        .rev()
-        .take(14)
-        .map(|r#move| {
-            let result = match board.do_move(r#move) {
-                Ok(Some(winner)) if winner == want_to_win => Score(i32::MAX, recursion as i32),
-                Ok(Some(_)) => Score(i32::MIN, recursion as i32),
-                // We take the negative here because it's the opponents move.
-                Ok(None) => {
-                    let Score(big, small) = score_board(board, recursion - 1).1;
-                    Score(-big, -small)
+        match player_a.pick_move(&mut board) {
+            Some(r#move) => {
+                let _ = board.do_move(r#move);
+                if print_debugging {
+                    println!("{} did {:?}", player_a.name(), r#move);
                 }
-                Err(_) => panic!("Invalid!"),
-            };
-            board.undo_move();
-            (Some(r#move), result)
-        })
-        .max_by_key(|(_, v)| *v)
-        .unwrap_or((None, Score(0, 0)))
+            }
+            None => {
+                if print_debugging || require_user_output {
+                    println!("{} forfeit!", player_a.name());
+                }
+                return Player::B;
+            },
+        }
+
+        if let Some(won) = board.won {
+            if print_debugging || require_user_output {
+                board.print();
+                println!("{} won!", player_a.name());
+            }
+            return won;
+        }
+
+        if print_debugging || require_user_output {
+            println!("{}s move.", player_b.name());
+            board.print();
+        }
+
+        match player_b.pick_move(&mut board) {
+            Some(r#move) => {
+                let _ = board.do_move(r#move);
+                if print_debugging {
+                    println!("{} did {:?}", player_b.name(), r#move);
+                }
+            }
+            None => {
+                if print_debugging || require_user_output {
+                    println!("{} forfeit!", player_b.name());
+                }
+                return Player::A;
+            },
+        }
+
+        if let Some(won) = board.won {
+            if print_debugging ||require_user_output {
+                board.print();
+                println!("{} won!", player_b.name());
+            }
+            return won;
+        }
+    }
 }
 
 fn main() {
-    let mut board = Board::new();
-    'outer: loop {
-        for _ in 0..2 {
-            println!();
-        }
-
-        board.print();
-
-        let (ai_move, score) = score_board(&mut board, 5);
-
-        println!("AI(on your side) judges this board {}", score.0);
-
-        let mut string = String::new();
-        let _ = std::io::stdin().read_line(&mut string);
-
-        let mut failed_move = true;
-
-        let r#move = if string.trim().is_empty() {
-            ai_move
-        } else {
-            Move::from_string(board.current_player, &string)
-        };
-
-        if let Some(r#move) = r#move {
-            println!("Did move {:?}", r#move);
-            match board.do_move(r#move) {
-                Ok(won) => {
-                    if won.is_some() {
-                        board.print();
-                        println!("We have a winner!");
-                        break 'outer;
-                    }
-
-                    failed_move = false;
-                }
-                Err(err) => {
-                    println!("Move failed because {}", err);
-                }
-            }
-        } else {
-            println!("Invalid coordinate!");
-        }
-
-        if failed_move {
-            println!("Press <ENTER> to try another move");
-            let _ = std::io::stdin().read_line(&mut string);
-            continue 'outer;
-        }
-
-        assert_eq!(board.current_player, Player::B);
-        board.print();
-        if let (Some(r#move), scored) = score_board(&mut board, 6) {
-            println!("The computer scores this board a {}", scored.0);
-            match board.do_move(r#move) {
-                Ok(Some(_)) => {
-                    board.print();
-                    println!("Computer won!");
-                    break 'outer;
-                }
-                Ok(None) => {
-                    println!("Computer did move");
-                }
-                Err(error) => {
-                    println!("Computer made an invalid move! {}", error);
-                    break 'outer;
-                }
-            }
-            println!("Computer did {:?}", r#move);
-        }
-    }
+    run_match(
+        UserInput("Trolled".to_string()),
+        MinMax::new(BasicScore, 5),
+        false,
+    );
 }
