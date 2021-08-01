@@ -52,7 +52,7 @@ impl ScoringFunction for BasicScore {
                     ScoreThing::Score(board.score).invert()
                 }
             },
-            board.moves.len() as i32,
+            -(board.moves as i32),
         )
     }
 }
@@ -66,7 +66,7 @@ impl ScoringFunction for BetterBasicScore {
             Player::A => {
                 if board.player_a_one_left >= 1 {
                     ScoreThing::Max
-                } else if board.player_b_one_left >= 2 {
+                } else if false &&  board.player_b_one_left >= 2 {
                     ScoreThing::Min
                 } else if board.won == Some(Player::A) {
                     ScoreThing::Max
@@ -79,7 +79,7 @@ impl ScoringFunction for BetterBasicScore {
             Player::B => {
                 if board.player_b_one_left >= 1 {
                     ScoreThing::Max
-                } else if board.player_a_one_left >= 2 {
+                } else if false && board.player_a_one_left >= 2 {
                     ScoreThing::Min
                 } else if board.won == Some(Player::B) {
                     ScoreThing::Max
@@ -93,7 +93,7 @@ impl ScoringFunction for BetterBasicScore {
 
         Score(
             score,
-            board.moves.len() as i32,
+            -(board.moves as i32),
         )
     }
 }
@@ -235,9 +235,10 @@ pub fn run_match(player_a: impl Ai, player_b: impl Ai, print_debugging: bool) ->
 
 fn main() {
     run_match(
-        Switch(Random, MinMax::new(BasicScore, 5), 2),
-        Switch(Random, MinMax::new(BetterBasicScore, 5), 2),
-        false,
+        // Switch(Random, MinMax::new(BetterBasicScore, BetterBasicScore, 5, 10), 0),
+        UserInput("Trolled".to_string()),
+        Switch(Random, MinMax::new(BetterBasicScore, BetterBasicScore, 6, 10), 0),
+        true,
     );
 
         // Random,

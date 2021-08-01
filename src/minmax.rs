@@ -1,29 +1,34 @@
 use crate::{Ai, ScoringFunction, Score, WORLD_SIZE, ScoreThing};
 use crate::board::{Board, Move};
 use glam::ivec2;
+use rayon::prelude::*;
 
 #[derive(Default, Clone, Copy)]
-pub struct MinMax<T> {
+pub struct MinMax<T, Q> {
     pub score: T,
+    pub filter_score: Q,
     pub depth: u32,
+    pub culling: usize,
 }
 
-impl<T> MinMax<T> {
-    pub fn new(score: T, depth: u32) -> Self {
+impl<T, Q> MinMax<T, Q> {
+    pub fn new(score: T, filter_score: Q, depth: u32, culling: usize) -> Self {
         Self {
             score,
+            filter_score,
             depth,
+            culling,
         }
     }
 }
 
-impl<T> ScoringFunction for MinMax<T> where T: ScoringFunction {
+impl<T, Q> ScoringFunction for MinMax<T, Q> where T: ScoringFunction + Send + Sync, Q: ScoringFunction + Send + Sync {
     fn score(&self, board: &mut Board) -> Score {
         self.do_minmax(board, self.depth).1
     }
 }
 
-impl<T> Ai for MinMax<T> where T: ScoringFunction {
+impl<T, Q> Ai for MinMax<T, Q> where T: ScoringFunction + Send + Sync, Q: ScoringFunction + Send + Sync {
     fn name(&self) -> &str {
         "Min max"
     }
@@ -35,7 +40,7 @@ impl<T> Ai for MinMax<T> where T: ScoringFunction {
     }
 }
 
-impl<T> MinMax<T> where T: ScoringFunction {
+impl<T, Q> MinMax<T, Q> where T: ScoringFunction + Send + Sync, Q: ScoringFunction + Send + Sync {
     fn do_minmax(&self, board: &mut Board, recursion: u32) -> (Option<Move>, Score) {
         if recursion == 0 {
             // println!("Found board end");
@@ -46,16 +51,16 @@ impl<T> MinMax<T> where T: ScoringFunction {
 
         let temp_moves: Vec<Move> = board.get_moves().collect();
         let mut moves: Vec<(Move, ScoreThing)> = temp_moves
-            .into_iter()
-            .map(|r#move| {
-                let result = match board.do_move(r#move) {
-                    Ok(Some(winner)) if winner == want_to_win => ScoreThing::Max,
-                    Ok(Some(_)) => ScoreThing::Min,
+            .into_par_iter()
+            .map_with(*board, |board, r#move| {
+                let handle = board.do_reversible_move(r#move);
+                let result = match handle.board.won {
+                    Some(winner) if winner == want_to_win => ScoreThing::Max,
+                    Some(_) => ScoreThing::Min,
                     // We take the negative here because it's the opponents move(the resulting board is for the opponent).
-                    Ok(None) => self.score.score(board).0.invert(),
-                    Err(_) => panic!("Invalid!"),
+                    None => self.filter_score.score(handle.board).0.invert(),
                 };
-                board.undo_move();
+                drop(handle);
                 (r#move, result)
             })
             .collect();
@@ -83,21 +88,20 @@ impl<T> MinMax<T> where T: ScoringFunction {
         }
 
         // Do the full scoring of the top moves
-        moves
-            .into_iter()
-            .take(14)
-            .map(|(r#move, _)| {
-                let result = match board.do_move(r#move) {
-                    Ok(Some(winner)) if winner == want_to_win => Score(ScoreThing::Max, recursion as i32),
-                    Ok(Some(_)) => Score(ScoreThing::Min, recursion as i32),
+        moves[..self.culling]
+            .par_iter()
+            .map_with(*board, |board, &(r#move, _)| {
+                let handle = board.do_reversible_move(r#move);
+                let result = match handle.board.won {
+                    Some(winner) if winner == want_to_win => Score(ScoreThing::Max, recursion as i32),
+                    Some(_) => Score(ScoreThing::Min, recursion as i32),
                     // We take the negative here because it's the opponents move.
-                    Ok(None) => {
-                        let Score(big, small) = self.do_minmax(board, recursion - 1).1;
+                    None => {
+                        let Score(big, small) = self.do_minmax(handle.board, recursion - 1).1;
                         Score(big.invert(), -small)
                     }
-                    Err(_) => panic!("Invalid!"),
                 };
-                board.undo_move();
+                drop(handle);
                 (Some(r#move), result)
             })
             .max_by_key(|(_, v)| *v)

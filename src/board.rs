@@ -5,15 +5,33 @@ use glam::{IVec2, ivec2};
 pub const WORLD_SIZE: usize = 16;
 pub const WIN_LENGTH: i32 = 5;
 
-#[derive(Default, Clone)]
+pub struct BoardHandle<'a> {
+    pub board: &'a mut Board,
+    pos: IVec2,
+    score: i32,
+    player_a_one_left: i32,
+    player_b_one_left: i32,
+}
+
+impl Drop for BoardHandle<'_> {
+    fn drop(&mut self) {
+        self.board.won = None;
+        self.board.set(self.pos, None);
+        self.board.score = self.score;
+        self.board.player_a_one_left = self.player_a_one_left;
+        self.board.player_b_one_left = self.player_b_one_left;
+        self.board.current_player = self.board.current_player.rotate();
+        self.board.moves -= 1;
+    }
+}
+
+#[derive(Default, Clone, Copy)]
 pub struct Board {
     grid: [[Tile; WORLD_SIZE]; WORLD_SIZE],
     pub current_player: Player,
-    pub moves: Vec<Move>,
+    pub moves: usize,
     pub score: i32,
-    score_stack: Vec<i32>,
     pub won: Option<Player>,
-
     pub player_a_one_left: i32,
     pub player_b_one_left: i32,
 }
@@ -133,6 +151,7 @@ impl Board {
                     .filter(move |&x|
                         matches!(self.get(ivec2(x, y)), Some(None))
                         && (
+                            true || 
                             matches!(self.get(ivec2(x + 1, y)),     Some(Some(_))) ||
                             matches!(self.get(ivec2(x - 1, y)),     Some(Some(_))) ||
                             matches!(self.get(ivec2(x, y + 1)),     Some(Some(_))) ||
@@ -231,20 +250,29 @@ impl Board {
         )
     }
 
-    pub fn do_move(&mut self, r#move: Move) -> Result<Option<Player>, &'static str> {
+    pub fn do_reversible_move(&mut self, r#move: Move) -> BoardHandle<'_> {
+        let board_handle = BoardHandle {
+            pos: r#move.pos,
+            score: self.score,
+            player_a_one_left: self.player_a_one_left,
+            player_b_one_left: self.player_b_one_left,
+            board: self,
+        };
+        board_handle.board.do_move(r#move);
+        board_handle
+    }
+
+    pub fn do_move(&mut self, r#move: Move) -> Option<Player> {
         if self.won.is_some() {
-            return Err("Cannot do a move when someone has won");
+            debug_assert!(false, "Cannot do a move when someone has won");
         }
 
         let Move { pos, player } = r#move;
 
         if let Some(Some(_)) = self.get(pos) {
-            return Err("Something is already at this spot");
+            debug_assert!(false, "Something is already at this spot");
         }
 
-        let old_score = self.score;
-        let old_player_a_one_left = self.player_a_one_left;
-        let old_player_b_one_left = self.player_b_one_left;
         let (score, a_one_left, b_one_left, _) = self.score_for_position(pos);
         self.score -= score;
         self.player_a_one_left -= a_one_left;
@@ -257,14 +285,10 @@ impl Board {
 
         // If the set failed, then don't update the current player
         if result.is_none() {
-            self.score = old_score;
-            self.player_a_one_left = old_player_a_one_left;
-            self.player_b_one_left = old_player_b_one_left;
-            return Err("Invalid coordinate");
+            panic!("Invalid coordinate");
         }
 
-        self.moves.push(r#move);
-        self.score_stack.push(old_score);
+        self.moves += 1;
 
         self.current_player = self.current_player.rotate();
 
@@ -272,31 +296,7 @@ impl Board {
             self.won = Some(winner);
         }
 
-        Ok(winner)
-    }
-
-    pub fn undo_move(&mut self) {
-        if let Some(r#move) = self.moves.pop() {
-            self.won = None;
-
-            let Move { pos, .. } = r#move;
-
-            let (score, a_one_left, b_one_left, _) = self.score_for_position(pos);
-            self.score -= score;
-            self.player_a_one_left -= a_one_left;
-            self.player_b_one_left -= b_one_left;
-
-            self.set(pos, None);
-
-            let (score, a_one_left, b_one_left, _) = self.score_for_position(pos);
-            self.score += score;
-            self.player_a_one_left += a_one_left;
-            self.player_b_one_left += b_one_left;
-
-            assert_eq!(Some(self.score), self.score_stack.pop());
-
-            self.current_player = self.current_player.rotate();
-        }
+        winner
     }
 }
 

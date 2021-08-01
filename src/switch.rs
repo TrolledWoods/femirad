@@ -12,7 +12,7 @@ impl<A, B> Ai for Switch<A, B> where A: Ai, B: Ai {
     fn name(&self) -> &str { "Switch" }
 
     fn pick_move(&self, board: &mut Board) -> Option<Move> {
-        if board.moves.len() >= self.2 * 2 {
+        if board.moves >= self.2 * 2 {
             self.1.pick_move(board)
         } else {
             self.0.pick_move(board)
