@@ -1,10 +1,11 @@
 use std::convert::TryFrom;
+use crate::ScoringFunction;
 use glam::{IVec2, ivec2};
 
 pub const WORLD_SIZE: usize = 16;
 pub const WIN_LENGTH: i32 = 5;
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct Board {
     grid: [[Tile; WORLD_SIZE]; WORLD_SIZE],
     pub current_player: Player,
@@ -12,6 +13,9 @@ pub struct Board {
     pub score: i32,
     score_stack: Vec<i32>,
     pub won: Option<Player>,
+
+    pub player_a_one_left: i32,
+    pub player_b_one_left: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,6 +50,12 @@ pub enum Player {
     B,
 }
 
+impl Default for Player {
+    fn default() -> Self {
+        Self::A
+    }
+}
+
 impl Player {
     pub fn rotate(self) -> Self {
         match self {
@@ -57,17 +67,10 @@ impl Player {
 
 impl Board {
     pub fn new() -> Self {
-        Self {
-            grid: [[None; WORLD_SIZE]; WORLD_SIZE],
-            current_player: Player::A,
-            moves: Vec::new(),
-            score: 0,
-            score_stack: Vec::new(),
-            won: None,
-        }
+        Self::default()
     }
 
-    pub fn print(&self) {
+    pub fn print(&mut self) {
         print!("    ");
         for i in 0..WORLD_SIZE {
             print!("{} ", char::from_digit(i as u32, 36).expect("Cannot handle a board greater than 36 in size"));
@@ -102,7 +105,10 @@ impl Board {
             Player::B => println!("O to move"),
         }
 
-        println!("The score of the board is {}", self.score);
+        /*println!("The score of the board is {}", self.score);
+        println!("The \"better\" score of the board is {}", crate::BetterBasicScore.score(self).0);
+        println!("A one left is {}", self.player_a_one_left);
+        println!("B one left is {}", self.player_b_one_left);*/
     }
 
     pub fn get(&self, pos: IVec2) -> Option<Tile> {
@@ -146,64 +152,81 @@ impl Board {
         !matches!(self.get(r#move.pos), Some(Some(_)) | None)
     }
 
-    fn pos_directional_score(&self, pos: IVec2, direction: IVec2) -> (i32, Option<Player>) {
+    fn pos_directional_score(&self, pos: IVec2, direction: IVec2) -> (i32, i32, i32, Option<Player>) {
         let mut score = 0_i32;
+
+        let mut player_a_one_left = 0_i32;
+        let mut player_b_one_left = 0_i32;
 
         let mut player_a = 0_i32;
         let mut player_b = 0_i32;
 
         let mut winner = None;
 
-        let mut pos = pos + direction * -(WIN_LENGTH as i32);
-        for i in -(WIN_LENGTH as i32) .. WIN_LENGTH as i32 {
-            match self.get(pos) {
+        for i in -(WIN_LENGTH as i32)..0 {
+            match self.get(pos + direction * i) {
                 Some(Some(Player::A)) => player_a += 1,
                 Some(Some(Player::B)) => player_b += 1,
                 Some(None) => {},
                 None => {},
             }
-
-            if i >= 0 {
-                match self.get(pos - direction * WIN_LENGTH) {
-                    Some(Some(Player::A)) => player_a -= 1,
-                    Some(Some(Player::B)) => player_b -= 1,
-                    Some(None) => {},
-                    None => {
-                        pos += direction;
-                        continue;
-                    },
-                }
-
-                if player_a == 0 {
-                    if player_b == WIN_LENGTH {
-                        winner = Some(Player::B);
-                    } else {
-                        score = score.saturating_sub(player_b.pow(2));
-                    }
-                } else if player_b == 0 {
-                    if player_a == WIN_LENGTH {
-                        winner = Some(Player::A);
-                    } else {
-                        score = score.saturating_add(player_a.pow(2));
-                    }
-                }
-            }
-
-            pos += direction;
-
         }
 
-        (score, winner)
+        for i in 0 .. WIN_LENGTH as i32 {
+            match self.get(pos + direction * i) {
+                Some(Some(Player::A)) => player_a += 1,
+                Some(Some(Player::B)) => player_b += 1,
+                Some(None) => {},
+                None => {
+                    continue;
+                },
+            }
+
+            match self.get(pos + direction * (i - (WIN_LENGTH as i32))) {
+                Some(Some(Player::A)) => player_a -= 1,
+                Some(Some(Player::B)) => player_b -= 1,
+                Some(None) => {},
+                None => {
+                    continue;
+                },
+            }
+
+            if player_a == 0 {
+                if player_b == WIN_LENGTH {
+                    winner = Some(Player::B);
+                } else {
+                    if player_b == WIN_LENGTH - 1 {
+                        player_b_one_left += 1;
+                    }
+
+                    score -= player_b.pow(2);
+                }
+            } else if player_b == 0 {
+                if player_a == WIN_LENGTH {
+                    winner = Some(Player::A);
+                } else {
+                    if player_a == WIN_LENGTH - 1 {
+                        player_a_one_left += 1;
+                    }
+
+                    score += player_a.pow(2);
+                }
+            }
+        }
+
+        (score, player_a_one_left, player_b_one_left, winner)
     }
 
-    pub fn score_for_position(&self, pos: IVec2) -> (i32, Option<Player>) {
-        let (score0, winner0) = self.pos_directional_score(pos, ivec2(0, 1));
-        let (score1, winner1) = self.pos_directional_score(pos, ivec2(1, 1));
-        let (score2, winner2) = self.pos_directional_score(pos, ivec2(-1, 1));
-        let (score3, winner3) = self.pos_directional_score(pos, ivec2(1, 0));
+    pub fn score_for_position(&self, pos: IVec2) -> (i32, i32, i32, Option<Player>) {
+        let (score0, player_a_one_left0, player_b_one_left0, winner0) = self.pos_directional_score(pos, ivec2(0, 1));
+        let (score1, player_a_one_left1, player_b_one_left1, winner1) = self.pos_directional_score(pos, ivec2(1, 1));
+        let (score2, player_a_one_left2, player_b_one_left2, winner2) = self.pos_directional_score(pos, ivec2(-1, 1));
+        let (score3, player_a_one_left3, player_b_one_left3, winner3) = self.pos_directional_score(pos, ivec2(1, 0));
 
         (
             score0.saturating_add(score1).saturating_add(score2).saturating_add(score3),
+            player_a_one_left0 + player_a_one_left1 + player_a_one_left2 + player_a_one_left3,
+            player_b_one_left0 + player_b_one_left1 + player_b_one_left2 + player_b_one_left3,
             winner0.or(winner1).or(winner2).or(winner3),
         )
     }
@@ -220,13 +243,23 @@ impl Board {
         }
 
         let old_score = self.score;
-        self.score -= self.score_for_position(pos).0;
+        let old_player_a_one_left = self.player_a_one_left;
+        let old_player_b_one_left = self.player_b_one_left;
+        let (score, a_one_left, b_one_left, _) = self.score_for_position(pos);
+        self.score -= score;
+        self.player_a_one_left -= a_one_left;
+        self.player_b_one_left -= b_one_left;
         let result = self.set(pos, Some(player));
-        let (new_score, winner) = self.score_for_position(pos);
-        self.score += new_score;
+        let (score, a_one_left, b_one_left, winner) = self.score_for_position(pos);
+        self.score += score;
+        self.player_a_one_left += a_one_left;
+        self.player_b_one_left += b_one_left;
+
         // If the set failed, then don't update the current player
         if result.is_none() {
             self.score = old_score;
+            self.player_a_one_left = old_player_a_one_left;
+            self.player_b_one_left = old_player_b_one_left;
             return Err("Invalid coordinate");
         }
 
@@ -248,9 +281,17 @@ impl Board {
 
             let Move { pos, .. } = r#move;
 
-            self.score -= self.score_for_position(pos).0;
+            let (score, a_one_left, b_one_left, _) = self.score_for_position(pos);
+            self.score -= score;
+            self.player_a_one_left -= a_one_left;
+            self.player_b_one_left -= b_one_left;
+
             self.set(pos, None);
-            self.score += self.score_for_position(pos).0;
+
+            let (score, a_one_left, b_one_left, _) = self.score_for_position(pos);
+            self.score += score;
+            self.player_a_one_left += a_one_left;
+            self.player_b_one_left += b_one_left;
 
             assert_eq!(Some(self.score), self.score_stack.pop());
 
