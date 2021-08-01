@@ -1,7 +1,8 @@
 use std::convert::TryFrom;
 use glam::{IVec2, ivec2};
+use rayon::prelude::*;
 
-pub const WORLD_SIZE: usize = 32;
+pub const WORLD_SIZE: usize = 16;
 pub const WIN_LENGTH: i32 = 5;
 
 pub type Tile = Option<Player>;
@@ -27,6 +28,7 @@ pub struct Board {
     moves: Vec<Move>,
     score: i32,
     score_stack: Vec<i32>,
+    won: Option<Player>,
 }
 
 impl Board {
@@ -37,6 +39,7 @@ impl Board {
             moves: Vec::new(),
             score: 0,
             score_stack: Vec::new(),
+            won: None,
         }
     }
 
@@ -58,10 +61,10 @@ impl Board {
 
             for (x, tile) in row.iter().enumerate() {
                 match tile {
-                    None if x % 5 == 4 && y % 5 == 4 => print!("{}{}", char::from_digit(x as u32, 36).unwrap(), char::from_digit(y as u32, 36).unwrap()),
-                    None if y % 5 == 4 => print!(".."),
+                    None if x % 5 == 4 && y % 5 == 4 => print!(": "), // print!("{}{}", char::from_digit(x as u32, 36).unwrap(), char::from_digit(y as u32, 36).unwrap()),
+                    None if y % 5 == 4 => print!(". "),
                     None if x % 5 == 4 => print!(": "),
-                    None => print!(". "),
+                    None => print!("  "),
                     Some(Player::A) => print!("X "),
                     Some(Player::B) => print!("O "),
                 }
@@ -123,11 +126,13 @@ impl Board {
         }
     }
 
-    fn pos_directional_score(&self, pos: IVec2, direction: IVec2) -> i32 {
+    fn pos_directional_score(&self, pos: IVec2, direction: IVec2) -> (i32, Option<Player>) {
         let mut score = 0_i32;
 
         let mut player_a = 0_i32;
         let mut player_b = 0_i32;
+
+        let mut winner = None;
 
         let mut pos = pos + direction * -(WIN_LENGTH as i32);
         for i in -(WIN_LENGTH as i32) .. WIN_LENGTH as i32 {
@@ -151,13 +156,13 @@ impl Board {
 
                 if player_a == 0 {
                     if player_b == WIN_LENGTH {
-                        score = -10000;
+                        winner = Some(Player::B);
                     } else {
                         score = score.saturating_sub(player_b.pow(2));
                     }
                 } else if player_b == 0 {
-                    if player_b == WIN_LENGTH {
-                        score = 10000;
+                    if player_a == WIN_LENGTH {
+                        winner = Some(Player::A);
                     } else {
                         score = score.saturating_add(player_a.pow(2));
                     }
@@ -168,84 +173,19 @@ impl Board {
 
         }
 
-        score
+        (score, winner)
     }
 
-    pub fn score_for_position(&self, pos: IVec2) -> i32 {
-        self.pos_directional_score(pos, ivec2(0, 1))
-            .saturating_add(self.pos_directional_score(pos, ivec2(1, 0)))
-            .saturating_add(self.pos_directional_score(pos, ivec2(1, 1)))
-            .saturating_add(self.pos_directional_score(pos, ivec2(-1, 1)))
-    }
+    pub fn score_for_position(&self, pos: IVec2) -> (i32, Option<Player>) {
+        let (score0, winner0) = self.pos_directional_score(pos, ivec2(0, 1));
+        let (score1, winner1) = self.pos_directional_score(pos, ivec2(1, 1));
+        let (score2, winner2) = self.pos_directional_score(pos, ivec2(-1, 1));
+        let (score3, winner3) = self.pos_directional_score(pos, ivec2(1, 0));
 
-    fn score_for_direction(&self, positions: impl Iterator<Item = IVec2>, direction: IVec2) -> i32 {
-        let mut score = 0_i32;
-
-        // Essentially we loop through all places where a win could occur.
-        // If there's nothing there, it could be a win in the future, but no worry, we give it a score of 0 since it's not active at the moment.
-        // If there is a single player there, then that player could use that place to win, so we give a score of however many tiles that player has there, cubed, since having more makes it exponentially more dangerous.
-        // If both players have tiles there, then neither of them could complete the win, so it's also a score of 0.
-        for mut pos in positions {
-            let mut player_a = 0_i32;
-            let mut player_b = 0_i32;
-            
-            loop {
-                match self.get(pos) {
-                    Some(Some(Player::A)) => player_a += 1,
-                    Some(Some(Player::B)) => player_b += 1,
-                    Some(None) => {},
-                    None => break,
-                }
-
-                match self.get(pos - direction * WIN_LENGTH) {
-                    Some(Some(Player::A)) => player_a -= 1,
-                    Some(Some(Player::B)) => player_b -= 1,
-                    Some(None) => {},
-                    None => {
-                        pos += direction;
-                        continue;
-                    },
-                }
-
-                if player_a == 0 {
-                    if player_b == WIN_LENGTH {
-                        score = -10000;
-                    } else {
-                        score = score.saturating_sub(player_b.pow(2));
-                    }
-                } else if player_b == 0 {
-                    if player_b == WIN_LENGTH {
-                        score = 10000;
-                    } else {
-                        score = score.saturating_add(player_a.pow(2));
-                    }
-                }
-
-                pos += direction;
-            }
-        }
-
-        score
-    }
-
-    pub fn score(&self) -> i32 {
-        self.score_for_direction(
-            (0..WORLD_SIZE as i32).map(|v| ivec2(0, v)),
-            ivec2(1, 0),
-        ).saturating_add(self.score_for_direction(
-            (0..WORLD_SIZE as i32).map(|v| ivec2(0, v))
-            .chain((0..WORLD_SIZE as i32).map(|v| ivec2(v, 0))),
-            ivec2(1, 1),
-        ))
-        .saturating_add(self.score_for_direction(
-            (0..WORLD_SIZE as i32).map(|v| ivec2(0, v)),
-            ivec2(0, 1),
-        ))
-        .saturating_add(self.score_for_direction(
-            (0..WORLD_SIZE as i32).map(|v| ivec2(WORLD_SIZE as i32 - 1, v))
-            .chain((0..WORLD_SIZE as i32).map(|v| ivec2(v, 0))),
-            ivec2(-1, 1),
-        ))
+        (
+            score0.saturating_add(score1).saturating_add(score2).saturating_add(score3),
+            winner0.or(winner1).or(winner2).or(winner3),
+        )
     }
 
     fn check_win_for_direction(&self, wanted: Player, direction: IVec2) -> bool {
@@ -280,7 +220,11 @@ impl Board {
         || self.check_win_for_direction(wanted, ivec2(-1, 1))
     }
 
-    pub fn do_move(&mut self, r#move: Move) -> Result<bool, &'static str> {
+    pub fn do_move(&mut self, r#move: Move) -> Result<Option<Player>, &'static str> {
+        if self.won.is_some() {
+            return Err("Cannot do a move when someone has won");
+        }
+
         match r#move {
             Move::Set(pos, player) => {
                 if let Some(Some(_)) = self.get(pos) {
@@ -288,35 +232,39 @@ impl Board {
                 }
 
                 let old_score = self.score;
-                self.score -= self.score_for_position(pos);
+                self.score -= self.score_for_position(pos).0;
                 let result = self.set(pos, Some(player));
-                self.score += self.score_for_position(pos);
+                let (new_score, winner) = self.score_for_position(pos);
+                self.score += new_score;
                 // If the set failed, then don't update the current player
                 if result.is_none() {
                     self.score = old_score;
                     return Err("Invalid coordinate");
                 }
 
+                self.moves.push(r#move);
                 self.score_stack.push(old_score);
+
+                self.current_player = self.current_player.rotate();
+
+                if let Some(winner) = winner {
+                    self.won = Some(winner);
+                }
+
+                Ok(winner)
             }
         }
-
-        self.moves.push(r#move);
-
-        let won = self.check_win(self.current_player);
-
-        self.current_player = self.current_player.rotate();
-
-        Ok(won)
     }
 
     pub fn undo_move(&mut self) {
         if let Some(r#move) = self.moves.pop() {
+            self.won = None;
+
             match r#move {
                 Move::Set(pos, _) => {
-                    self.score -= self.score_for_position(pos);
+                    self.score -= self.score_for_position(pos).0;
                     self.set(pos, None);
-                    self.score += self.score_for_position(pos);
+                    self.score += self.score_for_position(pos).0;
                 }
             }
 
@@ -347,32 +295,61 @@ impl Move {
     }
 }
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+pub struct Score(i32, i32);
+
 fn fast_board_score(board: &Board) -> i32 {
     board.score * if board.current_player == Player::A { 1 } else { -1 }
 }
 
-fn score_board(board: &mut Board, recursion: usize) -> (Option<Move>, i32) {
+fn score_board(board: &mut Board, recursion: usize) -> (Option<Move>, Score) {
     if recursion == 0 {
         // println!("Found board end");
-        return (None, fast_board_score(board));
+        return (None, Score(fast_board_score(board), 0));
     }
 
-    let moves: Vec<_> = board.get_moves().collect();
+    let want_to_win = board.current_player;
 
+    let mut moves: Vec<_> = board.get_moves().collect();
+
+    if moves.is_empty() {
+        return (Some(Move::Set(ivec2(WORLD_SIZE as i32 / 2, WORLD_SIZE as i32 / 2), board.current_player)), Score(0, 0));
+    }
+
+    // Do the temporary thing
+    moves.sort_by_key(|&r#move| {
+        let result = match board.do_move(r#move) {
+            Ok(Some(winner)) if winner == want_to_win => i32::MAX,
+            Ok(Some(_)) => i32::MIN,
+            // We take the negative here because it's the opponents move(the resulting board is for the opponent).
+            Ok(None) => -fast_board_score(board),
+            Err(_) => panic!("Invalid!"),
+        };
+        board.undo_move();
+        result
+    });
+
+    // Do the full scoring of the top moves
     moves
         .into_iter()
+        .rev()
+        .take(14)
         .map(|r#move| {
             let result = match board.do_move(r#move) {
-                Ok(true) => i32::MAX,
+                Ok(Some(winner)) if winner == want_to_win => Score(i32::MAX, recursion as i32),
+                Ok(Some(_)) => Score(i32::MIN, recursion as i32),
                 // We take the negative here because it's the opponents move.
-                Ok(false) => -score_board(board, recursion - 1).1,
+                Ok(None) => {
+                    let Score(big, small) = score_board(board, recursion - 1).1;
+                    Score(-big, -small)
+                }
                 Err(_) => panic!("Invalid!"),
             };
             board.undo_move();
             (Some(r#move), result)
         })
         .max_by_key(|(_, v)| *v)
-        .unwrap_or((None, i32::MIN))
+        .unwrap_or((None, Score(0, 0)))
 }
 
 fn main() {
@@ -384,14 +361,26 @@ fn main() {
 
         board.print();
 
+        let (ai_move, score) = score_board(&mut board, 5);
+
+        println!("AI(on your side) judges this board {}", score.0);
+
         let mut string = String::new();
         let _ = std::io::stdin().read_line(&mut string);
 
         let mut failed_move = true;
-        if let Some(r#move) = Move::from_string(board.current_player, &string) {
+
+        let r#move = if string.trim().is_empty() {
+            ai_move
+        } else {
+            Move::from_string(board.current_player, &string)
+        };
+
+        if let Some(r#move) = r#move {
+            println!("Did move {:?}", r#move);
             match board.do_move(r#move) {
                 Ok(won) => {
-                    if won {
+                    if won.is_some() {
                         board.print();
                         println!("We have a winner!");
                         break 'outer;
@@ -415,14 +404,15 @@ fn main() {
 
         assert_eq!(board.current_player, Player::B);
         board.print();
-        if let (Some(r#move), _) = score_board(&mut board, 4) {
+        if let (Some(r#move), scored) = score_board(&mut board, 6) {
+            println!("The computer scores this board a {}", scored.0);
             match board.do_move(r#move) {
-                Ok(true) => {
+                Ok(Some(_)) => {
                     board.print();
                     println!("Computer won!");
                     break 'outer;
                 }
-                Ok(false) => {
+                Ok(None) => {
                     println!("Computer did move");
                 }
                 Err(error) => {
@@ -430,6 +420,7 @@ fn main() {
                     break 'outer;
                 }
             }
+            println!("Computer did {:?}", r#move);
         }
     }
 }
