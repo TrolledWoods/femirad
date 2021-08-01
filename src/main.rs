@@ -1,8 +1,35 @@
 use glam::ivec2;
-
 use board::*;
 
+mod minmax;
 mod board;
+
+/// A function that can rate how good a board is for the current player.
+pub trait ScoringFunction {
+    /// The reason the board variable is mutable is so that the Ai can play around with it as a scratch-pad
+    /// of sorts, after the function returns the state of the board should not have changed.
+    fn score(&self, board: &mut Board) -> Score;
+}
+
+/// An `Ai` that can play moves on a board
+pub trait Ai {
+    /// This function should return which move it will make on a given board.
+    /// The reason the board variable is mutable is so that the Ai can play around with it as a scratch-pad
+    /// of sorts, after the function returns the state of the board should not have changed.
+    fn pick_move(&self, board: &mut Board) -> Option<Move>;
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct BasicScore;
+
+impl ScoringFunction for BasicScore {
+    fn score(&self, board: &mut Board) -> Score {
+        Score(
+            board.score * if board.current_player == Player::A { 1 } else { -1 },
+            board.moves.len() as i32,
+        )
+    }
+}
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Score(i32, i32);

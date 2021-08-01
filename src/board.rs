@@ -8,7 +8,7 @@ pub const WIN_LENGTH: i32 = 5;
 pub struct Board {
     grid: [[Tile; WORLD_SIZE]; WORLD_SIZE],
     pub current_player: Player,
-    moves: Vec<Move>,
+    pub moves: Vec<Move>,
     pub score: i32,
     score_stack: Vec<i32>,
     won: Option<Player>,
