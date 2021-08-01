@@ -2,7 +2,9 @@ use glam::ivec2;
 use board::*;
 use user_input::UserInput;
 use minmax::MinMax;
+use random::Random;
 
+mod random;
 mod user_input;
 mod minmax;
 mod board;
@@ -108,8 +110,11 @@ pub fn run_match(player_a: impl Ai, player_b: impl Ai, print_debugging: bool) ->
 
 fn main() {
     run_match(
-        UserInput("Trolled".to_string()),
-        MinMax::new(BasicScore, 5),
-        false,
+        // UserInput("Trolled".to_string()),
+        // MinMax::new(BasicScore, 5),
+        // MinMax::new(BasicScore, 6),
+        Random,
+        Random,
+        true,
     );
 }
